@@ -1,0 +1,492 @@
+import streamlit as st
+import re
+import sys
+import os
+from collections import Counter
+from typing import Dict, Any, List, Optional
+
+
+class NLPSummarizer:
+    """Advanced NLP-based article summarization using extractive techniques."""
+   
+    def __init__(self):
+        self.stop_words = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have',
+            'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+            'this', 'that', 'these', 'those', 'i', 'me', 'my', 'myself', 'we',
+            'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself',
+            'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers',
+            'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs',
+            'themselves', 'what', 'which', 'who', 'whom', 'whose', 'why', 'how',
+            'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some',
+            'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too',
+            'very', 's', 't', 'can', 'just', 'don', 'now', 'd', 'll', 'm', 'o', 're',
+            've', 'y', 'ain', 'aren', 'couldn', 'didn', 'doesn', 'hadn', 'hasn',
+            'haven', 'isn', 'ma', 'mightn', 'mustn', 'needn', 'shan', 'shouldn',
+            'wasn', 'weren', 'won', 'wouldn'
+        }
+   
+    def summarize(self, text: str, target_words: int = 150, style: str = "paragraph") -> Dict[str, Any]:
+        """Summarize article using extractive NLP techniques."""
+        try:
+            if not text or not isinstance(text, str):
+                return self._error_result("Invalid input text")
+           
+            cleaned_text = self._clean_text(text)
+            sentences = self._extract_sentences(cleaned_text)
+           
+            if len(sentences) < 3:
+                return self._error_result("Text too short - need at least 3 complete sentences")
+           
+            scores = self._score_sentences(sentences, cleaned_text)
+            if not scores:
+                return self._error_result("Unable to analyze sentence importance")
+           
+            selected = self._select_sentences(sentences, scores, target_words)
+            if not selected:
+                return self._error_result("Could not generate meaningful summary")
+           
+            summary = self._format_output(selected, style)
+           
+            return {
+                "success": True,
+                "summary": summary,
+                "word_count": len(summary.split()),
+                "original_words": len(text.split()),
+                "compression_ratio": round((1 - len(summary.split()) / len(text.split())) * 100, 1),
+                "style": style,
+                "error": None
+            }
+           
+        except Exception as e:
+            return self._error_result(f"Processing error: {str(e)}")
+   
+    def _error_result(self, message: str) -> Dict[str, Any]:
+        """Return standardized error result."""
+        return {
+            "success": False,
+            "summary": "",
+            "word_count": 0,
+            "original_words": 0,
+            "compression_ratio": 0,
+            "style": "",
+            "error": message
+        }
+   
+    def _clean_text(self, text: str) -> str:
+        """Clean and normalize input text."""
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'([.!?])([A-Z])', r'\1 \2', text)
+        text = re.sub(r'[^\w\s.!?,:;()-]', '', text)
+        return text.strip()
+   
+    def _extract_sentences(self, text: str) -> List[str]:
+        """Extract well-formed sentences from text."""
+        raw_sentences = re.split(r'(?<=[.!?])\s+', text)
+       
+        sentences = []
+        for sentence in raw_sentences:
+            sentence = sentence.strip()
+            words = sentence.split()
+            if 8 <= len(words) <= 50:
+                if not sentence.endswith(('.', '!', '?')):
+                    sentence += '.'
+                sentences.append(sentence)
+       
+        return sentences
+   
+    def _score_sentences(self, sentences: List[str], full_text: str) -> Dict[int, float]:
+        """Calculate importance scores for each sentence."""
+        words = re.findall(r'\b[a-zA-Z]{3,}\b', full_text.lower())
+        content_words = [w for w in words if w not in self.stop_words]
+       
+        if not content_words:
+            return {}
+       
+        word_freq = Counter(content_words)
+        scores = {}
+       
+        for i, sentence in enumerate(sentences):
+            sentence_words = re.findall(r'\b[a-zA-Z]{3,}\b', sentence.lower())
+            sentence_content = [w for w in sentence_words if w not in self.stop_words]
+           
+            if not sentence_content:
+                scores[i] = 0.0
+                continue
+           
+            freq_score = sum(word_freq[word] for word in sentence_content) / len(sentence_content)
+           
+            position_bonus = 1.0
+            if i < len(sentences) * 0.15:
+                position_bonus = 1.4
+            elif i > len(sentences) * 0.85:
+                position_bonus = 1.2
+           
+            length_factor = min(len(sentence_content) / 12, 1.2)
+            scores[i] = freq_score * position_bonus * length_factor
+       
+        return scores
+   
+    def _select_sentences(self, sentences: List[str], scores: Dict[int, float], target_words: int) -> List[str]:
+        """Select the most important sentences for the summary."""
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+       
+        selected = []
+        word_count = 0
+        max_sentences = min(len(sentences) // 2, 6)
+       
+        for i, (idx, score) in enumerate(ranked):
+            if i >= max_sentences:
+                break
+           
+            sentence = sentences[idx]
+            sentence_words = len(sentence.split())
+           
+            if word_count + sentence_words > target_words * 1.3:
+                if word_count < target_words * 0.6:
+                    selected.append((idx, sentence))
+                break
+           
+            selected.append((idx, sentence))
+            word_count += sentence_words
+           
+            if word_count >= target_words * 0.8:
+                break
+       
+        if not selected and sentences:
+            selected = [(0, sentences[0])]
+       
+        selected.sort(key=lambda x: x[0])
+        return [sentence for _, sentence in selected]
+   
+    def _format_output(self, sentences: List[str], style: str) -> str:
+        """Format the summary according to the specified style."""
+        if not sentences:
+            return "Unable to generate summary."
+       
+        if style.lower() in ["bullets", "bullet", "bullet_points"]:
+            return '\n'.join(f"• {s.strip()}" for s in sentences)
+        elif style.lower() in ["highlights", "key_highlights"]:
+            return '\n'.join(f"→ {s.strip()}" for s in sentences)
+        else:
+            return ' '.join(s.strip() for s in sentences)
+
+
+class TextValidator:
+    """Text validation and preprocessing."""
+   
+    @staticmethod
+    def clean_text(text: str) -> str:
+        """Clean and preprocess input text."""
+        if not text or not isinstance(text, str):
+            return ""
+       
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'([.!?])([A-Z])', r'\1 \2', text)
+        text = re.sub(r'[^\w\s.!?,:;()-]', '', text)
+        return text.strip()
+   
+    @staticmethod
+    def validate_text(text: str) -> Dict[str, Any]:
+        """Validate text for summarization."""
+        if not text or not isinstance(text, str):
+            return {
+                "is_valid": False,
+                "message": "No text provided",
+                "word_count": 0,
+                "sentence_count": 0
+            }
+       
+        words = text.split()
+        word_count = len(words)
+       
+        sentences = re.split(r'[.!?]+', text)
+        sentence_count = len([s for s in sentences if s.strip()])
+       
+        if word_count < 30:
+            return {
+                "is_valid": False,
+                "message": f"Text too short ({word_count} words). Need at least 30 words.",
+                "word_count": word_count,
+                "sentence_count": sentence_count
+            }
+       
+        if sentence_count < 3:
+            return {
+                "is_valid": False,
+                "message": "Need at least 3 sentences for summarization.",
+                "word_count": word_count,
+                "sentence_count": sentence_count
+            }
+       
+        return {
+            "is_valid": True,
+            "message": "Text is valid",
+            "word_count": word_count,
+            "sentence_count": sentence_count
+        }
+
+
+def run_streamlit_app():
+    """Streamlit web interface."""
+    st.set_page_config(
+        page_title="Article Summarizer",
+        page_icon="📄",
+        layout="wide"
+    )
+   
+    st.title("📄 NLP Article Summarizer")
+    st.markdown("Transform lengthy articles into concise summaries using advanced NLP techniques.")
+   
+    summarizer = NLPSummarizer()
+    validator = TextValidator()
+   
+    with st.sidebar:
+        st.header("⚙️ Settings")
+       
+        summary_length = st.selectbox(
+            "Summary Length",
+            ["Short", "Medium", "Long"],
+            index=1
+        )
+       
+        summary_style = st.selectbox(
+            "Summary Style",
+            ["Paragraph", "Bullet Points", "Key Highlights"],
+            index=0
+        )
+       
+        if summary_length == "Short":
+            target_words = st.slider("Target Words", 50, 150, 100)
+        elif summary_length == "Medium":
+            target_words = st.slider("Target Words", 150, 300, 200)
+        else:
+            target_words = st.slider("Target Words", 300, 500, 350)
+   
+    col1, col2 = st.columns([1, 1])
+   
+    with col1:
+        st.header("📝 Input Article")
+       
+        article_text = st.text_area(
+            "Paste your article here:",
+            height=400,
+            placeholder="Enter the article you want to summarize..."
+        )
+       
+        uploaded_file = st.file_uploader("Or upload a text file:", type=['txt'])
+       
+        if uploaded_file:
+            try:
+                article_text = str(uploaded_file.read(), "utf-8")
+                st.success("File uploaded successfully!")
+            except Exception as e:
+                st.error(f"Error reading file: {str(e)}")
+       
+        process_button = st.button(
+            "🔍 Generate Summary",
+            type="primary",
+            disabled=len(article_text.strip()) < 30
+        )
+   
+    with col2:
+        st.header("📋 Generated Summary")
+       
+        if process_button and article_text.strip():
+            with st.spinner("Processing article..."):
+                try:
+                    processed_text = validator.clean_text(article_text)
+                    validation = validator.validate_text(processed_text)
+                   
+                    if not validation["is_valid"]:
+                        st.error(f"❌ {validation['message']}")
+                    else:
+                        style_map = {
+                            "Paragraph": "paragraph",
+                            "Bullet Points": "bullets",
+                            "Key Highlights": "highlights"
+                        }
+                       
+                        result = summarizer.summarize(
+                            processed_text,
+                            target_words=target_words,
+                            style=style_map[summary_style]
+                        )
+                       
+                        if result["success"]:
+                            st.success("✅ Summary generated successfully!")
+                           
+                            original_words = validation["word_count"]
+                            summary_words = result["word_count"]
+                            compression = round((1 - summary_words / original_words) * 100, 1)
+                           
+                            st.info(f"📊 {original_words} → {summary_words} words ({compression}% reduction)")
+                           
+                            st.markdown("### Summary")
+                            if summary_style == "Bullet Points":
+                                for line in result["summary"].split('\n'):
+                                    if line.strip():
+                                        st.markdown(line)
+                            else:
+                                st.markdown(result["summary"])
+                           
+                            col_a, col_b, col_c = st.columns(3)
+                            with col_a:
+                                st.metric("Original Words", original_words)
+                            with col_b:
+                                st.metric("Summary Words", summary_words)
+                            with col_c:
+                                st.metric("Compression", f"{compression}%")
+                           
+                            st.text_area(
+                                "Copy Summary:",
+                                value=result["summary"],
+                                height=100
+                            )
+                        else:
+                            st.error(f"❌ {result['error']}")
+                           
+                except Exception as e:
+                    st.error(f"❌ Unexpected error: {str(e)}")
+   
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: #666;'>Powered by Local NLP | No API keys required</div>",
+        unsafe_allow_html=True
+    )
+
+
+def run_command_line():
+    """Command-line interface."""
+    print("=" * 60)
+    print("NLP Article Summarizer - Command Line")
+    print("=" * 60)
+   
+    summarizer = NLPSummarizer()
+    validator = TextValidator()
+   
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--demo":
+            run_demo()
+            return 0
+       
+        try:
+            with open(sys.argv[1], 'r', encoding='utf-8') as f:
+                article_text = f.read()
+            print(f"Loaded article from: {sys.argv[1]}")
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            return 1
+    else:
+        print("Enter your article (Ctrl+D to finish):")
+        try:
+            article_text = sys.stdin.read()
+        except KeyboardInterrupt:
+            print("\nOperation cancelled.")
+            return 1
+   
+    if not article_text.strip():
+        print("No text provided.")
+        return 1
+   
+    processed_text = validator.clean_text(article_text)
+    validation = validator.validate_text(processed_text)
+   
+    if not validation["is_valid"]:
+        print(f"Error: {validation['message']}")
+        return 1
+   
+    print(f"Processing {validation['word_count']} words...")
+   
+    result = summarizer.summarize(processed_text, target_words=150)
+   
+    if result["success"]:
+        print(f"\n{'='*60}")
+        print("SUMMARY")
+        print(f"{'='*60}")
+        print(result["summary"])
+       
+        print(f"\n{'='*60}")
+        print("STATISTICS")
+        print(f"{'='*60}")
+        print(f"Original: {result['original_words']} words")
+        print(f"Summary: {result['word_count']} words")
+        print(f"Compression: {result['compression_ratio']}%")
+       
+        print(f"\n{'-'*40}")
+        print("BULLET POINT VERSION:")
+        print(f"{'-'*40}")
+        bullet_result = summarizer.summarize(processed_text, target_words=150, style="bullets")
+        if bullet_result["success"]:
+            print(bullet_result["summary"])
+       
+        return 0
+    else:
+        print(f"Error: {result['error']}")
+        return 1
+
+
+def run_demo():
+    """Run demonstration with sample text."""
+    sample_text = """
+    Climate change represents one of the most significant challenges facing humanity in the 21st century.
+    Rising global temperatures are causing widespread environmental disruption across the planet.
+    Ice caps are melting at unprecedented rates, leading to rising sea levels that threaten coastal communities worldwide.
+    Extreme weather events, including hurricanes, droughts, and flooding, are becoming more frequent and severe.
+    Scientific consensus indicates that human activities, particularly the burning of fossil fuels, are the primary drivers of these changes.
+    Carbon dioxide levels in the atmosphere have reached their highest point in over three million years.
+    The impacts extend beyond environmental concerns to affect economic stability, food security, and human health.
+    Agricultural systems are under stress as changing precipitation patterns and temperature extremes disrupt crop yields.
+    Many species are facing extinction as their habitats disappear or become unsuitable.
+    However, there are reasons for hope as renewable energy technologies become more affordable and efficient.
+    Solar and wind power are now cost-competitive with fossil fuels in many regions.
+    Governments and businesses are increasingly committing to carbon neutrality goals.
+    Individual actions, from reducing energy consumption to supporting sustainable practices, also contribute to the solution.
+    The transition to a sustainable future requires coordinated global action, technological innovation, and changes in how we live and work.
+    The choices made in the coming decade will determine the trajectory of our planet's climate for generations to come.
+    """
+   
+    print("DEMONSTRATION: Climate Change Article Summary")
+    print("=" * 60)
+   
+    summarizer = NLPSummarizer()
+    validator = TextValidator()
+   
+    validation = validator.validate_text(sample_text)
+    print(f"Input validation: {validation['message']}")
+    print(f"Article stats: {validation['word_count']} words, {validation['sentence_count']} sentences")
+   
+    if validation["is_valid"]:
+        styles = [
+            ("paragraph", "PARAGRAPH SUMMARY"),
+            ("bullets", "BULLET POINT SUMMARY"),
+            ("highlights", "KEY HIGHLIGHTS")
+        ]
+       
+        for style, title in styles:
+            result = summarizer.summarize(sample_text, target_words=100, style=style)
+           
+            print(f"\n{title}")
+            print("-" * len(title))
+            if result["success"]:
+                print(result["summary"])
+                print(f"Words: {result['word_count']} | Compression: {result['compression_ratio']}%")
+            else:
+                print(f"Error: {result['error']}")
+
+
+def is_streamlit_running():
+    """Check if running in Streamlit environment."""
+    try:
+        import streamlit.runtime.scriptrunner.script_run_context as script_run_context
+        return script_run_context.get_script_run_ctx() is not None
+    except:
+        return False
+
+
+if __name__ == "__main__":
+    if is_streamlit_running():
+        run_streamlit_app()
+    else:
+        sys.exit(run_command_line())
